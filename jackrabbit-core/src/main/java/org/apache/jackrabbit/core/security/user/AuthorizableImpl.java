@@ -83,6 +83,18 @@ abstract class AuthorizableImpl implements Authorizable, UserConstants {
     }
 
     /**
+     * Get this authorizables ID but guard any exceptions.
+     * @return this authorizables ID
+     */
+    private String safeGetId() {
+        try {
+            return getID();
+        } catch (RepositoryException e) {
+            return Text.unescapeIllegalJcrChars(Text.getName(node.safeGetJCRPath()));
+        }
+    }
+
+    /**
      * @see Authorizable#declaredMemberOf()
      */
     public Iterator<Group> declaredMemberOf() throws RepositoryException {
@@ -347,7 +359,10 @@ abstract class AuthorizableImpl implements Authorizable, UserConstants {
         MembershipCache cache = userManager.getMembershipCache();
         String nid = node.getIdentifier();
 
+        final long t0 = System.nanoTime();
+        boolean collect = false;
         if (node.getSession().hasPendingChanges()) {
+            collect = true;
             // avoid retrieving outdated cache entries or filling the cache with
             // invalid data due to group-membership changes pending on the
             // current session.
@@ -360,7 +375,7 @@ abstract class AuthorizableImpl implements Authorizable, UserConstants {
             //  retrieve cached membership. there are no pending changes.
             groupNodeIds = (includeIndirect) ? cache.getMemberOf(nid) : cache.getDeclaredMemberOf(nid);
         }
-
+        final long t1 = System.nanoTime();
         Set<Group> groups = new HashSet<Group>(groupNodeIds.size());
         for (String identifier : groupNodeIds) {
             try {
@@ -370,6 +385,20 @@ abstract class AuthorizableImpl implements Authorizable, UserConstants {
             } catch (RepositoryException e) {
                 // group node doesn't exist or cannot be read -> ignore.
             }
+        }
+        final long t2 = System.nanoTime();
+        if (log.isDebugEnabled()) {
+            log.debug("Collected {} {} group ids for [{}] in {}us, loaded {} groups in {}us (collect={}, cachesize={}/{})", new Object[]{
+                    groupNodeIds.size(),
+                    includeIndirect ? "transitive" : "declared",
+                    safeGetId(),
+                    (t1-t0) / 1000,
+                    groups.size(),
+                    (t2-t1) / 1000,
+                    collect,
+                    cache.getMembershipCacheSize(),
+                    cache.getMemberCacheSize(),
+            });
         }
         return new RangeIteratorAdapter(groups.iterator(), groups.size());
     }
